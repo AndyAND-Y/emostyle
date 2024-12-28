@@ -8,6 +8,7 @@ from models.emo_mapping import EmoMappingWplus
 from models.emonet import EmoNet
 from models.stylegan2_interface import StyleGAN2
 import json
+import threading
 
 is_cuda = torch.cuda.is_available()
 device = 'cuda' if is_cuda else 'cpu'
@@ -100,7 +101,7 @@ def load_latent(latent_path):
     return image_latent
 
 
-def compute_image_tenor(input_image: Image):
+def transform_image_tenor(input_image: Image):
 
     input_image_tensor = torch.tensor(
         np.array(input_image).transpose(2, 0, 1) / 255.0,
@@ -110,7 +111,7 @@ def compute_image_tenor(input_image: Image):
     return input_image_tensor
 
 
-def compute_tensor_image(image_tensor: torch.tensor):
+def transform_tensor_image(image_tensor: torch.tensor):
 
     return np.clip(
         (image_tensor.detach().cpu().squeeze().numpy() * 255),
@@ -137,12 +138,7 @@ def get_edited_image_data(latent, target_valence, target_arousal, emo_mapping, s
     edited_image_tensor = stylegan.generate(fake_latents)
     edited_image_tensor = (edited_image_tensor + 1.0) / 2.0
 
-    edited_image_data = np.clip(
-        (edited_image_tensor.detach().cpu().squeeze().numpy() * 255),
-        0, 255
-    ).astype(np.uint8).transpose(1, 2, 0)
-
-    return edited_image_data
+    return edited_image_tensor
 
 
 def compute_valence_arousal(image_tensor, model):
@@ -160,90 +156,117 @@ def save_image(image_data, path):
     image.save(path)
 
 
+def save_images_concurrently(image_data_list, output_dir, filename):
+    threads = []
+
+    for idx, image_data in enumerate(image_data_list):
+
+        output_path = f"{
+            output_dir}/{filename}/{filename}-{idx}.png"
+
+        thread = threading.Thread(
+            target=save_image, args=(image_data, output_path)
+        )
+        thread.start()
+        threads.append(thread)
+
+    for thread in threads:
+        thread.join()
+
+
+def save_result(result, path):
+    with open(path, 'w') as json_file:
+        json.dump(result, json_file, indent=4)
+
+
+def save_results_concurrently(results, output_dir):
+
+    threads = []
+
+    for idx, result in enumerate(results):
+
+        output_file_result = f"{
+            output_dir}/{result['filename']}/result-{result['filename']}.json"
+
+        thread = threading.Thread(
+            target=save_result, args=(results, output_file_result)
+        )
+        thread.start()
+        threads.append(thread)
+
+    for thread in threads:
+        thread.join()
+
+
 def run_edit_on_foder(images_data, models, valences, arousals, out_folder_path):
     """
     Generate images by varying emotions (valence, arousal).
     """
+    os.makedirs(out_folder_path, exist_ok=True)
+    emotions = [(v, a) for v in valences for a in arousals]
 
-    if not os.path.exists(out_folder_path):
-        os.makedirs(out_folder_path, exist_ok=True)
+    # precompute latents
+    lantens = [
+        load_latent(image_data['latent_path'])
+        for image_data in images_data
+    ]
 
-    results = []
+    # precomupute outputs
+    images_name = [
+        f"{os.path.splitext(image_data["image_filename"])[0]}"
+        for image_data in images_data
+    ]
+
+    for name in images_name:
+        os.makedirs(f"{out_folder_path}/{name}/", exist_ok=True)
+
+    # outputs
+    results = [
+        {
+            "filename": images_name[idx],
+            "original_image_path": image_data["image_path"],
+            "edited_images": [0] * len(emotions)
+        }
+        for idx, image_data in enumerate(images_data)
+    ]
 
     for image_idx in tqdm(range(len(images_data)), desc="Editing Images"):
 
-        latent = load_latent(images_data[image_idx]['latent_path'])
+        latent = lantens[image_idx]
 
-        image_results = {
-            "original_image_path": images_data[image_idx]["image_path"],
-            "edited_images": []
-        }
+        image_data_list = [0] * len(emotions)
 
-        img_name = os.path.splitext(
-            images_data[image_idx]["image_filename"]
-        )[0]
+        for idx, (target_valence, target_arousal) in enumerate(emotions):
 
-        output_dir = f"{out_folder_path}/{img_name}/"
+            edited_image_tensor = get_edited_image_data(
+                latent, target_valence, target_arousal, models['emostyle'], models['stylegan2']
+            )
 
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
+            achieved_valence, achieved_arousal = compute_valence_arousal(
+                edited_image_tensor,
+                models['emonet']
+            )
 
-        save_idx = 0
+            img_name = images_name[image_idx]
 
-        for target_valence in valences:
-            for target_arousal in arousals:
+            output_file = f"{
+                out_folder_path}/{img_name}/{img_name}-{idx}.png"
 
-                emotion = torch.FloatTensor(
-                    [target_valence, target_arousal]
-                ).unsqueeze_(0).to(device)
+            image_data_list[idx] = transform_tensor_image(edited_image_tensor)
 
-                fake_latents = latent + models["emostyle"](latent, emotion)
+            results[image_idx]["edited_images"][idx] = {
+                "target_valence": target_valence,
+                "target_arousal": target_arousal,
+                "achieved_valence": achieved_valence,
+                "achieved_arousal": achieved_arousal,
+                "path": output_file
+            }
 
-                edited_image_tensor = models['stylegan2'].generate(
-                    fake_latents)
-                edited_image_tensor = (edited_image_tensor + 1.) / 2.
+        save_images_concurrently(
+            image_data_list, out_folder_path, images_name[image_idx]
+        )
 
-                achieved_valence, achieved_arousal = compute_valence_arousal(
-                    edited_image_tensor,
-                    models["emonet"]
-                )
-
-                edited_image_data = edited_image_tensor.detach().cpu().squeeze().numpy()
-
-                edited_image_data = np \
-                    .clip(
-                        edited_image_data * 255, 0, 255
-                    )\
-                    .transpose(
-                        1, 2, 0
-                    )\
-                    .astype(np.uint8)
-
-                output_file = f"{
-                    out_folder_path}/{img_name}/{img_name}-{save_idx}.png"
-
-                save_image(
-                    edited_image_data,
-                    output_file
-                )
-
-                image_results["edited_images"].append({
-                    "target_valence": target_valence,
-                    "target_arousal": target_arousal,
-                    "achieved_valence": achieved_valence,
-                    "achieved_arousal": achieved_arousal,
-                    "path": output_file
-                })
-
-                save_idx += 1
-
-        results.append(image_results)
-
-        output_file_result = f"{
-            out_folder_path}/{img_name}/result-{img_name}.json"
-
-        with open(output_file_result, 'w') as json_file:
-            json.dump(image_results, json_file, indent=4)
+    save_results_concurrently(results, out_folder_path)
 
     return results
 
@@ -258,7 +281,7 @@ def test(images_path, stylegan2_checkpoint_path, checkpoint_path, output_path, v
         checkpoint_path
     )
 
-    image_data = load_images_path(images_path)[:5]
+    image_data = load_images_path(images_path)[:16]
 
     # return
     results = run_edit_on_foder(
@@ -269,7 +292,7 @@ def test(images_path, stylegan2_checkpoint_path, checkpoint_path, output_path, v
         output_path
     )
 
-    print(results)
+    print(len(results))
 
 
 if __name__ == "__main__":
@@ -279,9 +302,11 @@ if __name__ == "__main__":
                         type=str, default="pretrained/ffhq2.pkl")
     parser.add_argument("--checkpoint_path", type=str,
                         default="checkpoints/emo_mapping_wplus_2.pt")
-    parser.add_argument("--output_path", type=str, default="results/")
-    parser.add_argument("--valence", type=float, nargs='+', default=[-1, 0, 1])
-    parser.add_argument("--arousal", type=float, nargs='+', default=[-1, 0, 1])
+    parser.add_argument("--output_path", type=str, default="results-test/")
+    parser.add_argument("--valence", type=float, nargs='+',
+                        default=[-1, 0.5, 0, 0.5, 1])
+    parser.add_argument("--arousal", type=float, nargs='+',
+                        default=[-1, 0.5, 0, 0.5, 1])
     parser.add_argument("--wplus", type=bool, default=True)
 
     args = parser.parse_args()
