@@ -1,15 +1,14 @@
 import os
-import pickle
-import random
 import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image
 from tqdm import tqdm
-from models.emo_mapping import EmoMappingWplus
-from models.emonet import EmoNet
-from models.stylegan2_interface import StyleGAN2
+from ..models.emo_mapping import EmoMappingWplus
+from ..models.emonet import EmoNet
+from ..models.stylegan2_interface import StyleGAN2
+
 
 is_cuda = torch.cuda.is_available()
 device = 'cuda' if is_cuda else 'cpu'
