@@ -1,0 +1,5 @@
+/dataset/
+/pretrained/
+__pycache__/
+/checkpoints/
+/results/
