@@ -12,6 +12,7 @@ import os
 from models.e4e.psp import pSp
 from models.stylegan2_interface import StyleGAN2
 
+
 class Inversion:
     def __init__(self, latent_path, inversion_type='e4e', cache_only=False, device='cuda') -> None:
         self.latent_path = latent_path
@@ -26,28 +27,31 @@ class Inversion:
                     checkpoint_path = 'pretrained/faces_w_encoder.pt'
                 elif self.inversion_type == 'e4e':
                     checkpoint_path = 'pretrained/e4e_ffhq_encode.pt'
-                ckpt = torch.load(checkpoint_path, map_location='cpu')
+                ckpt = torch.load(
+                    checkpoint_path, map_location='cpu', weights_only=True)
                 opts = ckpt['opts']
                 opts['device'] = self.device
                 opts['checkpoint_path'] = checkpoint_path
                 opts = Namespace(**opts)
-                self.encoder = pSp(opts).eval().to(self.device).requires_grad_(False)
+                self.encoder = pSp(opts).eval().to(
+                    self.device).requires_grad_(False)
 
             elif self.inversion_type == 'project':
                 self.stylegan = StyleGAN2(
-                    checkpoint_path='pretrained/ffhq2.pkl', # 'pretrained/stylegan2-ffhq-config-f.pt'
+                    # 'pretrained/stylegan2-ffhq-config-f.pt'
+                    checkpoint_path='pretrained/ffhq2.pkl',
                     stylegan_size=1024,
                     is_dnn=True,
                     is_pkl=True
                 )
                 self.stylegan.eval().requires_grad_(False).to(self.device)
 
-    def invert(self, image, image_name):    
+    def invert(self, image, image_name):
         latent = self.calc_inversion(image)
-        torch.save(latent, os.path.join(self.latent_path, f'{image_name}_{self.inversion_type}.pt'))
+        torch.save(latent, os.path.join(self.latent_path, f'{
+                   image_name}_{self.inversion_type}.pt'))
 
         return latent
-
 
     def load_latent(self, image_name):
         if image_name in self.latents:
@@ -62,10 +66,10 @@ class Inversion:
 
         if not os.path.isfile(os.path.join(self.latent_path, f'{image_name}_{self.inversion_type}.pt')):
             return None
-        w = torch.load(os.path.join(self.latent_path, f'{image_name}_{self.inversion_type}.pt'), map_location='cpu')#.to(self.device)
+        w = torch.load(os.path.join(self.latent_path, f'{image_name}_{
+                       self.inversion_type}.pt'), map_location='cpu')  # .to(self.device)
         self.latents[image_name] = w
         return w
-
 
     def calc_inversion(self, image):
         if self.inversion_type == 'e4e':
@@ -75,14 +79,13 @@ class Inversion:
             # id_image = torch.squeeze((image.to(self.device) + 1) / 2) * 255
             id_image = torch.squeeze((image + 1) / 2) * 255
             w = self.project(id_image, w_avg_samples=600,
-                num_steps=self.first_inv_steps,
-            )
+                             num_steps=self.first_inv_steps,
+                             )
 
         elif self.inversion_type == 'w_encoder':
             w = self.get_w_encoder_inversion(image)
 
         return w
-
 
     def get_e4e_inversion(self, image):
         image = (image + 1.) / 2.
@@ -91,7 +94,7 @@ class Inversion:
             transforms.Resize((256, 256)),
             transforms.ToTensor(),
             transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
-        
+
         image = transform(image).to(self.device)
         _, w = self.encoder(
             image.unsqueeze(0),
@@ -109,7 +112,7 @@ class Inversion:
             transforms.Resize((256, 256)),
             transforms.ToTensor(),
             transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
-        
+
         image = transform(image).to(self.device)
         _, w = self.encoder(
             image.unsqueeze(0),
@@ -120,10 +123,10 @@ class Inversion:
         )
         return w
 
-
     def project(
         self,
-        target: torch.Tensor,  # [C,H,W] and dynamic range [0,255], W & H must match G output resolution
+        # [C,H,W] and dynamic range [0,255], W & H must match G output resolution
+        target: torch.Tensor,
         *,
         num_steps=1000,
         w_avg_samples=10000,
@@ -145,10 +148,13 @@ class Inversion:
                 print(*args)
 
         # Compute w stats.
-        logprint(f'Computing W midpoint and stddev using {w_avg_samples} samples...')
+        logprint(f'Computing W midpoint and stddev using {
+                 w_avg_samples} samples...')
         z_samples = np.random.RandomState(123).randn(w_avg_samples, 512)
-        w_samples = self.stylegan.generate_latent_from_noise(torch.from_numpy(z_samples).to(self.device))  # [N, L, C]
-        w_samples = w_samples[:, :1, :].cpu().numpy().astype(np.float32)  # [N, 1, C]
+        w_samples = self.stylegan.generate_latent_from_noise(
+            torch.from_numpy(z_samples).to(self.device))  # [N, L, C]
+        w_samples = w_samples[:, :1, :].cpu(
+        ).numpy().astype(np.float32)  # [N, 1, C]
         w_avg = np.mean(w_samples, axis=0, keepdims=True)  # [1, 1, C]
         w_avg_tensor = torch.from_numpy(w_avg).to(self.device)
         w_std = (np.sum((w_samples - w_avg) ** 2) / w_avg_samples) ** 0.5
@@ -156,7 +162,8 @@ class Inversion:
         start_w = initial_w if initial_w is not None else w_avg
 
         # Setup noise inputs.
-        noise_bufs = {name: buf for (name, buf) in self.stylegan.generator.named_buffers() if 'noise_const' in name}
+        noise_bufs = {name: buf for (
+            name, buf) in self.stylegan.generator.named_buffers() if 'noise_const' in name}
 
         # Load VGG16 feature detector.
         url = 'https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metrics/vgg16.pt'
@@ -166,13 +173,15 @@ class Inversion:
         # Features for target image.
         target_images = target.unsqueeze(0).to(self.device).to(torch.float32)
         if target_images.shape[2] > 256:
-            target_images = F.interpolate(target_images, size=(256, 256), mode='area')
-        target_features = vgg16(target_images, resize_images=False, return_lpips=True)
+            target_images = F.interpolate(
+                target_images, size=(256, 256), mode='area')
+        target_features = vgg16(
+            target_images, resize_images=False, return_lpips=True)
 
         w_opt = torch.tensor(start_w, dtype=torch.float32, device=self.device,
-                            requires_grad=True)  # pylint: disable=not-callable
+                             requires_grad=True)  # pylint: disable=not-callable
         optimizer = torch.optim.Adam([w_opt] + list(noise_bufs.values()), betas=(0.9, 0.999),
-                                    lr=self.first_inv_lr)
+                                     lr=self.first_inv_lr)
 
         # Init noise.
         for buf in noise_bufs.values():
@@ -183,7 +192,8 @@ class Inversion:
 
             # Learning rate schedule.
             t = step / num_steps
-            w_noise_scale = w_std * initial_noise_factor * max(0.0, 1.0 - t / noise_ramp_length) ** 2
+            w_noise_scale = w_std * initial_noise_factor * \
+                max(0.0, 1.0 - t / noise_ramp_length) ** 2
             lr_ramp = min(1.0, (1.0 - t) / lr_rampdown_length)
             lr_ramp = 0.5 - 0.5 * np.cos(lr_ramp * np.pi)
             lr_ramp = lr_ramp * min(1.0, t / lr_rampup_length)
@@ -199,19 +209,24 @@ class Inversion:
             # Downsample image to 256x256 if it's larger than that. VGG was built for 224x224 images.
             synth_images = (synth_images + 1) * (255 / 2)
             if synth_images.shape[2] > 256:
-                synth_images = F.interpolate(synth_images, size=(256, 256), mode='area')
+                synth_images = F.interpolate(
+                    synth_images, size=(256, 256), mode='area')
 
             # Features for synth images.
-            synth_features = vgg16(synth_images, resize_images=False, return_lpips=True)
+            synth_features = vgg16(
+                synth_images, resize_images=False, return_lpips=True)
             dist = (target_features - synth_features).square().sum()
 
             # Noise regularization.
             reg_loss = 0.0
             for v in noise_bufs.values():
-                noise = v[None, None, :, :]  # must be [1,1,H,W] for F.avg_pool2d()
+                # must be [1,1,H,W] for F.avg_pool2d()
+                noise = v[None, None, :, :]
                 while True:
-                    reg_loss += (noise * torch.roll(noise, shifts=1, dims=3)).mean() ** 2
-                    reg_loss += (noise * torch.roll(noise, shifts=1, dims=2)).mean() ** 2
+                    reg_loss += (noise * torch.roll(noise,
+                                 shifts=1, dims=3)).mean() ** 2
+                    reg_loss += (noise * torch.roll(noise,
+                                 shifts=1, dims=2)).mean() ** 2
                     if noise.shape[2] <= 8:
                         break
                     noise = F.avg_pool2d(noise, kernel_size=2)
@@ -228,7 +243,8 @@ class Inversion:
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
-            logprint(f'step {step + 1:>4d}/{num_steps}: dist {dist:<4.2f} loss {float(loss):<5.2f}')
+            logprint(
+                f'step {step + 1:>4d}/{num_steps}: dist {dist:<4.2f} loss {float(loss):<5.2f}')
 
             # Normalize noise.
             with torch.no_grad():
@@ -242,7 +258,7 @@ class Inversion:
 if __name__ == '__main__':
     inversion = Inversion(
         latent_path='experiments/expr2_1024/latents',
-        inversion_type='project',
+        inversion_type='e4e',
         device='cuda'
     )
 
@@ -252,11 +268,14 @@ if __name__ == '__main__':
         transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
     ])
 
+    image_name = "IMG-20241229-WA0033.jpg"
+
     from PIL import Image
-    image = Image.open('face_augmented_79.png').convert('RGB')
+    image = Image.open(
+        f'./dataset/out-of-domain/andy/{image_name}').convert('RGB')
     image = transform(image)
 
-    latent = inversion.invert(image, 'face_augmented_79.png')
+    latent = inversion.invert(image, image_name)
 
     # checkpoint_path = 'pretrained/stylegan2-ffhq-config-f.pt'
     # ckpt = torch.load(checkpoint_path)
@@ -274,8 +293,12 @@ if __name__ == '__main__':
 
     synthesis = G(latent, noise_mode='const', force_fp32=True).squeeze()
 
-    image = (image.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8).cpu().numpy()
-    synthesis = (synthesis.permute(1, 2, 0) * 127.5 + 128).clamp(0, 255).to(torch.uint8).cpu().numpy()
+    image = (image.permute(1, 2, 0) * 127.5 + 128).clamp(0,
+                                                         255).to(torch.uint8).cpu().numpy()
+    synthesis = (synthesis.permute(1, 2, 0) * 127.5 +
+                 128).clamp(0, 255).to(torch.uint8).cpu().numpy()
 
-    Image.fromarray(image, 'RGB').save('orig.png')
-    Image.fromarray(synthesis, 'RGB').save('inverted.png')
+    Image.fromarray(image, 'RGB').save(
+        f'experiments/expr2_1024/latents/orig-{image_name}')
+    Image.fromarray(synthesis, 'RGB').save(
+        f'experiments/expr2_1024/latents/inverted-{image_name}')

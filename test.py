@@ -219,7 +219,7 @@ def generate_images(latents, emo_mapping, stylegan, valence, arousal, emonet, ou
     return emos_data
 
 
-def test(images_path, stylegan2_checkpoint_path, checkpoint_path, output_path, test_mode, valence, arousal, wplus):
+def generate_editied_images(images_path, stylegan2_checkpoint_path, checkpoint_path, output_path, test_mode, valence, arousal, wplus):
     """
     Main testing loop.
     """
@@ -240,6 +240,8 @@ def test(images_path, stylegan2_checkpoint_path, checkpoint_path, output_path, t
         output_path
     )
 
+    return emos_data
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Testing script")
@@ -256,7 +258,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    test(
+    generate_editied_images(
         images_path=args.images_path,
         stylegan2_checkpoint_path=args.stylegan2_checkpoint_path,
         checkpoint_path=args.checkpoint_path,
