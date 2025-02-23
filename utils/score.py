@@ -15,19 +15,20 @@
     test for id 
 """
 
-from torch.utils.data import  DataLoader
-from utils.imageDataset import ImageDataset
-import torch
-import time
-import random
-import utils.inference
-from torchmetrics.image.fid import FrechetInceptionDistance
-from torch.utils.data.dataloader import default_collate
-from torchvision import transforms
-import numpy as np
-import os
 import lpips
 import json
+import os
+import numpy as np
+from torchvision import transforms
+from torch.utils.data.dataloader import default_collate
+from torchmetrics.image.fid import FrechetInceptionDistance
+import utils.inference
+import random
+import time
+import torch
+from utils.imageDataset import ImageDataset
+from torch.utils.data import  DataLoader
+from models.arcface import ArcFace
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -41,18 +42,21 @@ def collate_fn(batch):
     return default_collate(batch).to(DEVICE)
 
 
-def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=False):
+def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=False, fromRandom=False):
 
     stylegan2_path = "pretrained/ffhq2.pkl"
     emostyle_path = "checkpoints/emo_mapping_wplus_2.pt"
     dataset_path = "dataset/1024_pkl/"
+    arcface_path = "pretrained/model_ir_se50.pth"
     output_path = ""
 
+    NUM_IMAGE = 1000
+    valences = [0] if fromRandom else [-1, -0.5, 0, 0.5, 1]
+    arousals = [0] if fromRandom else [-1, -0.5, 0, 0.5, 1]
+    multiplier = 1
+
     if not isGenerated:
-        NUM_IMAGE = 1000
-        valences = []
-        arousals = []
-        multiplier = 1
+
         output_path = f"{output_dir}/result-{time.strftime('%Y-%m-%d-%H-%M')}"
         os.makedirs(output_path, exist_ok=True)
 
@@ -88,7 +92,7 @@ def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=F
 
         fid_metric = FrechetInceptionDistance(
             input_img_size=(3, 1024, 1024)
-        ).to(DEVICE)
+        ).to(DEVICE).eval()
 
         original_images_loader = DataLoader(
             ImageDataset(dataset_path, transform=transform),
@@ -154,12 +158,11 @@ def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=F
 
     def get_lpips():
 
-        loss_fn = lpips.LPIPS(net='vgg').to(DEVICE)
+        loss_fn = lpips.LPIPS(net='vgg', verbose=False).to(DEVICE)
 
         transform = transforms.Compose([
 
             transforms.ToTensor(),
-            # Normalize to [-1,1] as required by LPIPS
             transforms.Normalize([0.5], [0.5])
         ])
 
@@ -187,13 +190,69 @@ def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=F
 
         avg_lpips = np.mean(results)
         return avg_lpips
-    # print(get_fid())
-    # print(get_va())
-    print(get_lpips())
+
+    def get_id():
+
+        arcface = ArcFace(arcface_path).to(DEVICE)
+        arcface.eval()
+
+        transform = transforms.Compose([
+            transforms.Grayscale(num_output_channels=1),
+            transforms.ToTensor(),
+        ])
+
+        original_images_loader = DataLoader(
+            ImageDataset(dataset_path, transform=transform),
+            shuffle=False
+        )
+
+        results = []
+
+        for emotion_id in range(len(valences)*len(arousals)):
+            emotion_edited_images_loader = DataLoader(
+                ImageDataset(output_path, transform=transform,
+                             emotion_id=emotion_id),
+                shuffle=False
+            )
+
+            with torch.no_grad():
+                for original_batch, edited_batch in zip(original_images_loader, emotion_edited_images_loader):
+                    original_batch = original_batch.to(DEVICE)
+                    edited_batch = edited_batch.to(DEVICE)
+
+                    id_score = torch.nn.functional.cosine_similarity(
+                        arcface(original_batch),
+                        arcface(edited_batch)
+                    )
+                    results.append(id_score.item())
+
+        return np.mean(results)
+
+    results = {
+        "ID": get_id(),
+        "FID": get_fid(),
+        "VA-std": get_va(),
+        "LPIPS": get_lpips(),
+    }
+    for x in results:
+        print(x, results[x])
+
+    timestamp = time.strftime('%Y-%m-%d-%H-%M')
+    results_filename = f"model-score-{timestamp}.json"
+    results_filepath = os.path.join(output_dir, results_filename)
+
+    with open(results_filepath, "w") as file:
+        json.dump(results, file, indent=4)
+
+    print(f"Results saved to {results_filepath}")
+
+    for key, value in results.items():
+        print(key, value)
 
 
 if __name__ == '__main__':
     analyse_model_performance(
         "./results/result-2025-02-22-17-47",
-        isGenerated=True
+        isGenerated=True,
+        fromRandom=True,
     )
