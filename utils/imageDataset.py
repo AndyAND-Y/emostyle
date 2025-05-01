@@ -5,6 +5,39 @@ from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 
 
+class ImageDatasetAFF(Dataset):
+    def __init__(self, folder_path, transform=None, load_every_n=1):
+        self.folder_path = folder_path
+        self.transform = transform
+        self.image_paths = []
+        self.load_every_n = load_every_n
+        for root, _, files in os.walk(folder_path):
+            image_files_in_folder = []
+            for file in files:
+                if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    image_files_in_folder.append(os.path.join(
+                        root, file.replace("\\", "/")
+                    ))
+
+            image_files_in_folder.sort()
+            for i in range(0, len(image_files_in_folder), self.load_every_n):
+                self.image_paths.append(image_files_in_folder[i])
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        img_path = self.image_paths[idx]
+        try:
+            image = Image.open(img_path).convert("RGB")
+            if self.transform:
+                image = self.transform(image)
+            return image, img_path
+        except Exception as e:
+            print(f"Error loading image: {img_path} - {e}")
+            return None, img_path
+
+
 class ImageDataset(Dataset):
     def __init__(self, image_dir, emotion_id=None, transform=None):
         self.image_dir = image_dir

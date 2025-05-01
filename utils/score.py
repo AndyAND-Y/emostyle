@@ -22,13 +22,14 @@ import numpy as np
 from torchvision import transforms
 from torch.utils.data.dataloader import default_collate
 from torchmetrics.image.fid import FrechetInceptionDistance
+from tqdm import tqdm
 import utils.inference
 import random
 import time
 import torch
 from utils.imageDataset import ImageDataset
 from torch.utils.data import  DataLoader
-from models.arcface import ArcFace
+from models.vggface2 import VGGFace2
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -44,10 +45,16 @@ def collate_fn(batch):
 
 def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=False, fromRandom=False):
 
+    np.random.seed(0)
+    torch.manual_seed(0)
+    random.seed(0)
+
     stylegan2_path = "pretrained/ffhq2.pkl"
-    emostyle_path = "checkpoints/emo_mapping_wplus_2.pt"
+    # emostyle_path = "D:\\ML\\data\\results-ai-upscaled\\checkpoint_4.pt"
+    emostyle_path = "D:\\ML\\data\\results-upscaled\\run2\\checkpoint_1.pt"
+    # emostyle_path = "checkpoints/emo_mapping_wplus_2.pt"
     dataset_path = "dataset/1024_pkl/"
-    arcface_path = "pretrained/model_ir_se50.pth"
+    vggface2_path = 'pretrained/resnet50_ft_weight.pkl'
     output_path = ""
 
     NUM_IMAGE = 1000
@@ -114,7 +121,7 @@ def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=F
 
             with torch.no_grad():
 
-                for original_batch in original_images_loader:
+                for original_batch in tqdm(original_images_loader):
                     fid_metric.update(original_batch, real=True)
 
                 for edited_batch in emotion_edited_images_loader:
@@ -181,7 +188,7 @@ def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=F
             )
 
             with torch.no_grad():
-                for original_batch, edited_batch in zip(original_images_loader, emotion_edited_images_loader):
+                for original_batch, edited_batch in tqdm(zip(original_images_loader, emotion_edited_images_loader)):
                     original_batch = original_batch.to(DEVICE)
                     edited_batch = edited_batch.to(DEVICE)
 
@@ -193,11 +200,10 @@ def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=F
 
     def get_id():
 
-        arcface = ArcFace(arcface_path).to(DEVICE)
-        arcface.eval()
+        vgg = VGGFace2(vggface2_path).to(DEVICE)
+        vgg.eval()
 
         transform = transforms.Compose([
-            transforms.Grayscale(num_output_channels=1),
             transforms.ToTensor(),
         ])
 
@@ -216,13 +222,13 @@ def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=F
             )
 
             with torch.no_grad():
-                for original_batch, edited_batch in zip(original_images_loader, emotion_edited_images_loader):
+                for original_batch, edited_batch in tqdm(zip(original_images_loader, emotion_edited_images_loader)):
                     original_batch = original_batch.to(DEVICE)
                     edited_batch = edited_batch.to(DEVICE)
 
                     id_score = torch.nn.functional.cosine_similarity(
-                        arcface(original_batch),
-                        arcface(edited_batch)
+                        vgg(original_batch),
+                        vgg(edited_batch)
                     )
                     results.append(id_score.item())
 
@@ -233,6 +239,7 @@ def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=F
         "FID": get_fid(),
         "VA-std": get_va(),
         "LPIPS": get_lpips(),
+        "model": emostyle_path
     }
     for x in results:
         print(x, results[x])
@@ -252,7 +259,7 @@ def analyse_model_performance(output_dir: str, test_mode="random", isGenerated=F
 
 if __name__ == '__main__':
     analyse_model_performance(
-        "./results/result-2025-02-22-17-47",
-        isGenerated=True,
+        "./results",
+        isGenerated=False,
         fromRandom=True,
     )
