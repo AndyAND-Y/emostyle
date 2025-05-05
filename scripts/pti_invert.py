@@ -11,8 +11,6 @@ from torchvision import transforms
 from PIL import Image
 from tqdm import tqdm
 
-import dnnlib
-
 # from dataset import PersonalizedSyntheticDataset
 from .invert import Inversion
 
@@ -39,39 +37,31 @@ def invert(
         inversion_type=inversion_type,
         device='cuda' if is_cuda else 'cpu'
     )
-    for image_name in tqdm(os.listdir(os.path.join(datapath, 'images/'))):
 
-        image_path = f"{os.path.join(datapath, 'images/')}/{image_name}"
+    image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff')
 
-        print(f'inverting, {image_path}')
+    # Get a list of all items in the directory
+    all_items = os.listdir(datapath)
+
+    # Filter for files that have one of the image extensions
+    image_files = [
+        item for item in all_items
+        if os.path.isfile(os.path.join(datapath, item)) and item.lower().endswith(image_extensions)
+    ]
+
+    for image_name in tqdm(image_files):
+
+        image_path = os.path.join(datapath, image_name)
+
+        # print(f'inverting, {image_path}')
         image = Image.open(image_path).convert('RGB')
         image = transform(image)
         latent = inversion.invert(
             image, os.path.basename(image_path).split('.')[0])
 
-        import pickle
-        try:
-            with dnnlib.util.open_url(str('pretrained/ffhq2.pkl')) as f:
-                G = pickle.load(f)['G_ema'].synthesis
-        except Exception as e:
-            G = torch.load('pretrained/ffhq2.pkl')
-        G = G.cuda()
-
-        synthesis = G(latent, noise_mode='const', force_fp32=True).squeeze()
-
-        image = (image.permute(1, 2, 0) * 127.5 + 128).clamp(0,
-                                                             255).to(torch.uint8).cpu().numpy()
-        synthesis = (synthesis.permute(1, 2, 0) * 127.5 +
-                     128).clamp(0, 255).to(torch.uint8).cpu().numpy()
-
-        Image.fromarray(image, 'RGB').save(
-            f'experiments/results/{image_name.split('.')[0]}-original.{image_name.split('.')[1]}')
-        Image.fromarray(synthesis, 'RGB').save(
-            f'experiments/results/{image_name.split('.')[0]}-inverted.{image_name.split('.')[1]}')
-
 
 if __name__ == "__main__":
     invert(
-        datapath="experiments/",
+        datapath="D:\\ML\\data\\upscaled\\ordered-256x256",
         inversion_type="e4e"  # e4e (wplus), w_encoder (w)
     )
